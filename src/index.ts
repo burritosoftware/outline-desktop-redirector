@@ -22,19 +22,21 @@ export default {
     let outlineHost = await env.OUTLINE_HOST.get("host");
     if (!outlineHost) {
       outlineHost = "app.getoutline.com";
-      // Store the default value so that subsequent requests see it in KV
       await env.OUTLINE_HOST.put("host", outlineHost);
     }
 
     const url = new URL(request.url);
     const requestHost = url.hostname;
     const requestPath = url.pathname;
+    const queryParams = url.searchParams;
     const cookieHeader = request.headers.get("Cookie");
+
+    // Check if path is "/desktop-login" or querystring has client=desktop
+    const isDesktopTrigger = requestPath === "/desktop-login" || queryParams.get("client") === "desktop";
 
     // If the request is already on the Outline host...
     if (requestHost === outlineHost) {
-      // Only intercept the "/desktop-login" path
-      if (requestPath === "/desktop-login") {
+      if (isDesktopTrigger) {
         const accessToken = getCookie(cookieHeader, "accessToken");
 
         if (accessToken) {
@@ -48,7 +50,7 @@ export default {
         }
       }
 
-      // On Outline host but not "/desktop-login" → let it pass through
+      // On Outline host but not a desktop-triggering request → let it pass through
       return fetch(request);
     }
 
