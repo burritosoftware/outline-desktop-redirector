@@ -1,53 +1,59 @@
 // src/index.ts
 
-/**
- * Cloudflare Worker that reads the "accessToken" cookie from the incoming request.
- * If the cookie exists, redirects to https://{host}/desktop-redirect?token={accessToken}.
- * Otherwise, redirects to https://{host}.
- */
+export interface Env {
+  OUTLINE_HOST: KVNamespace;
+}
 
 export default {
-  async fetch(request: Request): Promise<Response> {
-    // Extract the Host header to determine the target domain.
-    const host = request.headers.get('host');
-    if (!host) {
-      // If the Host header is missing, return a 400 Bad Request.
-      return new Response('Bad Request: Missing Host header', { status: 400 });
-    }
-
-    // Helper function to parse cookies into a key/value object.
-    function parseCookies(cookieHeader: string): Record<string, string> {
-      const cookies: Record<string, string> = {};
-      // Split individual cookies by ';'
-      const pairs = cookieHeader.split(';');
-      for (const pair of pairs) {
-        const [rawName, rawValue] = pair.split('=');
-        if (!rawName || rawValue === undefined) continue;
-        const name = rawName.trim();
-        const value = rawValue.trim();
-        cookies[name] = value;
+  async fetch(request: Request, env: Env): Promise<Response> {
+    // Helper to parse cookies from the "Cookie" header
+    function getCookie(cookieHeader: string | null, name: string): string | null {
+      if (!cookieHeader) return null;
+      const cookies = cookieHeader.split(";").map(c => c.trim().split("="));
+      for (const [key, ...rest] of cookies) {
+        if (key === name) {
+          return rest.join("=");
+        }
       }
-      return cookies;
+      return null;
     }
 
-    // Retrieve the Cookie header.
-    const cookieHeader = request.headers.get('Cookie') || '';
-    const cookies = parseCookies(cookieHeader);
-
-    // Look for the "accessToken" cookie.
-    const accessToken = cookies['accessToken'];
-
-    // Construct the redirect URL based on whether the token exists.
-    let redirectUrl: string;
-    if (accessToken) {
-      // Encode the token to ensure special characters are handled.
-      const encodedToken = encodeURIComponent(accessToken);
-      redirectUrl = `https://${host}/desktop-redirect?token=${encodedToken}`;
-    } else {
-      redirectUrl = `https://${host}`;
+    // Attempt to read the Outline host from KV. If missing, initialize it to the default.
+    let outlineHost = await env.OUTLINE_HOST.get("host");
+    if (!outlineHost) {
+      outlineHost = "app.getoutline.com";
+      // Store the default value so that subsequent requests see it in KV
+      await env.OUTLINE_HOST.put("host", outlineHost);
     }
 
-    // Perform a 302 redirect to the target URL.
-    return Response.redirect(redirectUrl, 302);
+    const url = new URL(request.url);
+    const requestHost = url.hostname;
+    const requestPath = url.pathname;
+    const cookieHeader = request.headers.get("Cookie");
+
+    // If the request is already on the Outline host...
+    if (requestHost === outlineHost) {
+      // Only intercept the "/desktop-login" path
+      if (requestPath === "/desktop-login") {
+        const accessToken = getCookie(cookieHeader, "accessToken");
+
+        if (accessToken) {
+          // Redirect to /desktop-redirect?token={accessToken}
+          const redirectUrl = `https://${outlineHost}/desktop-redirect?token=${encodeURIComponent(accessToken)}`;
+          return Response.redirect(redirectUrl, 302);
+        } else {
+          // No accessToken cookie: redirect to the Outline host root
+          const fallbackUrl = `https://${outlineHost}`;
+          return Response.redirect(fallbackUrl, 302);
+        }
+      }
+
+      // On Outline host but not "/desktop-login" → let it pass through
+      return fetch(request);
+    }
+
+    // If NOT on the Outline host, redirect to Outline host + "/desktop-login"
+    const loginUrl = `https://${outlineHost}/desktop-login`;
+    return Response.redirect(loginUrl, 302);
   },
 };
