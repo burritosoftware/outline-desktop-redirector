@@ -1,6 +1,6 @@
 // wrangler.jsonc
 {
-  "name": "redirect-worker",
+  "name": "outline-desktop-redirector",
   "main": "src/index.ts",
   "compatibility_date": "2025-03-07",
   "compatibility_flags": ["nodejs_compat"],
